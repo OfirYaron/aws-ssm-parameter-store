@@ -40,7 +40,7 @@ This action helps solve this problem by allowing the user to provide the path an
 
 ## Logging and masking
 
-The action calls [`core.setSecret`](https://github.com/actions/toolkit/tree/main/packages/core#setting-a-secret) on `ssm-value` as soon as it reads it, so the value is masked in the job log even when it is not a `secrets.*` reference (for example a step output or a generated password). The value is never written to the log: with step debug logging on (`ACTIONS_STEP_DEBUG`), only the parameter `Name`, `Type` and `Overwrite` flag are logged.
+The action calls [`core.setSecret`](https://github.com/actions/toolkit/tree/main/packages/core#setting-a-secret) on `ssm-value` as soon as it reads it, so the value is masked in the job log even when it is not a `secrets.*` reference (for example a step output or a generated password). The value is never written to the log: with step debug logging on (`ACTIONS_STEP_DEBUG`), only non-secret metadata is logged: the `aws-region`, the parameter `Name`, `Type` and `Overwrite` flag, the KMS key ID when one is set for a `SecureString`, and the `Version` and `Tier` returned by SSM.
 
 ## Runtime
 
