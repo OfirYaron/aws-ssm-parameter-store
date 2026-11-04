@@ -16,7 +16,7 @@ This action helps solve this problem by allowing the user to provide the path an
 
 ### `ssm-path`
 
-**Required** The value to be stored in the SSM Parameter Store Path.
+**Required** The SSM Parameter Store path (parameter name) to write to.
 
 ### `ssm-value`
 
@@ -37,6 +37,16 @@ This action helps solve this problem by allowing the user to provide the path an
 ### `ssm-kms-key-id`
 
 **Optional** The AWS KMS Key ARN to use to encrypt the key. Default uses the AWS Provided KMS Key ID .
+
+## Logging and masking
+
+The action calls [`core.setSecret`](https://github.com/actions/toolkit/tree/main/packages/core#setting-a-secret) on `ssm-value` as soon as it reads it, so the value is masked in the job log even when it is not a `secrets.*` reference (for example a step output or a generated password). The value is never written to the log: with step debug logging on (`ACTIONS_STEP_DEBUG`), only non-secret metadata is logged: the `aws-region`, the parameter `Name`, `Type` and `Overwrite` flag, the KMS key ID when one is set for a `SecureString`, and the `Version` and `Tier` returned by SSM.
+
+## Runtime
+
+The action runs on the `node24` runtime (`runs.using: node24`). GitHub runners default to Node 24 from June 16, 2026, and Node 20 was scheduled for removal on September 23, 2026 ([changelog](https://github.blog/changelog/2026-09-23-deprecation-of-node-20-on-github-actions-runners/)); Node 16 was retired before that. Self-hosted runners and GHES need runner v2.328.0 or newer. Node 24 has no ARM32 build and does not run on macOS 13.4 or older.
+
+The action runs the bundled `dist/index.js`. After changing `index.js` or the dependencies, rebuild it with `npm ci && npm run package` and commit `dist/`. The `Check dist/` workflow fails if the committed bundle is out of date.
 
 ## Example usage
 
