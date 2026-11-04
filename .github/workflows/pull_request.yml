@@ -4,14 +4,83 @@ on:
     branches:
       - master
 jobs:
+  # Runs without AWS: executes the bundled dist/index.js on the action's runtime
+  # (Node 24) with step debug on and fake credentials. Checks that the bundle
+  # loads, that ssm-value is masked before anything else is printed, and that the
+  # plaintext value never appears anywhere else in the output (OYS-493).
+  smoke_test:
+    runs-on: ubuntu-latest
+    name: Smoke test (no AWS)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Run dist/index.js and check the value is masked and never logged
+        env:
+          RUNNER_DEBUG: "1"
+          AWS_ACCESS_KEY_ID: AKIAFAKEFAKEFAKEFAKE
+          AWS_SECRET_ACCESS_KEY: fake-secret-access-key
+          AWS_EC2_METADATA_DISABLED: "true"
+        run: |
+          value="smoke-${GITHUB_RUN_ID}-${RANDOM}${RANDOM}"
+          # Invalid credentials make putParameter fail, which is expected here.
+          out=$(env "INPUT_SSM-PATH=/ci/smoke-test" "INPUT_SSM-VALUE=${value}" \
+            "INPUT_AWS-REGION=eu-west-1" "INPUT_SSM-VALUE-TYPE=SecureString" \
+            "INPUT_SSM-VALUE-OVERWRITE=true" node dist/index.js 2>&1 || true)
+          # Print the output with the value redacted, for debugging this job. The
+          # "| " prefix stops the runner from treating these lines as workflow
+          # commands (e.g. the expected ::error:: would become an annotation).
+          printf '%s\n' "$out" | sed "s/${value}/<VALUE>/g; s/^/| /"
+
+          first=$(printf '%s\n' "$out" | head -n 1)
+          if [ "$first" != "::add-mask::${value}" ]; then
+            echo "::error::The first line of output must be the ::add-mask:: command for ssm-value"
+            exit 1
+          fi
+          if printf '%s\n' "$out" | tail -n +2 | grep -qF -- "$value"; then
+            echo "::error::ssm-value appears in the output outside the ::add-mask:: command"
+            exit 1
+          fi
+          if ! printf '%s\n' "$out" | grep -q '^::error::.*security token'; then
+            echo "::error::Expected the run to reach the SSM call and fail on the fake credentials"
+            exit 1
+          fi
+          echo "Smoke test passed."
+
+  # Job-level `if` can't read secrets, so this job reports whether the AWS test
+  # credentials exist. Forks and repos without them skip the integration jobs
+  # instead of failing.
+  aws_credentials:
+    runs-on: ubuntu-latest
+    name: Check for AWS test credentials
+    outputs:
+      present: ${{ steps.check.outputs.present }}
+    steps:
+      - id: check
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          SSM_VALUE_EXAMPLE: ${{ secrets.SSM_VALUE_EXAMPLE }}
+        run: |
+          if [ -n "$AWS_ACCESS_KEY_ID" ] && [ -n "$SSM_VALUE_EXAMPLE" ]; then
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::AWS_ACCESS_KEY_ID / SSM_VALUE_EXAMPLE are not set; skipping the AWS integration tests."
+          fi
+
   add_to_ssm:
+    needs: aws_credentials
+    if: needs.aws_credentials.outputs.present == 'true'
     runs-on: ubuntu-latest
     name: Test in a github runner
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -38,14 +107,16 @@ jobs:
           aws-region: eu-west-1
 
   add_to_ssm_on_container:
-    runs-on: Ubuntu-20.04
+    needs: aws_credentials
+    if: needs.aws_credentials.outputs.present == 'true'
+    runs-on: ubuntu-latest
     name: Test in a node container
-    container: node:12.20.1-alpine3.10
+    container: node:24-alpine
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -65,15 +136,17 @@ jobs:
           aws-region: eu-west-1
 
   add_to_ssm_on_container_and_environment:
-    runs-on: Ubuntu-20.04
+    needs: aws_credentials
+    if: needs.aws_credentials.outputs.present == 'true'
+    runs-on: ubuntu-latest
     name: Test in a node container and environment
-    container: node:12.20.1-alpine3.10
+    container: node:24-alpine
     environment: dev
     steps:
       - name: Checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
       - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v1
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
@@ -94,7 +167,7 @@ jobs:
 
   check_semver_label:
     name: Check for semantic version label
-    runs-on: Ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - uses: docker://agilepathway/pull-request-label-checker:latest
         with:
@@ -103,7 +176,7 @@ jobs:
 
   check_pull_request_type:
     name: Check for pull request type label
-    runs-on: Ubuntu-20.04
+    runs-on: ubuntu-latest
     steps:
       - uses: docker://agilepathway/pull-request-label-checker:latest
         with:
